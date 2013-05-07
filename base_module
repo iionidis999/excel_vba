@@ -1,0 +1,652 @@
+Option Explicit
+
+Sub ii_reshapeComment(ByRef pComment As Comment)
+' Resize comment shape to make it readable with the following assumptions:
+' 96 pts for abcdefghijklmnopqrstuv = 22 chars ~ we will assume 150pts for 40 chars and add 2 more lines for overflow.
+    Const c_defwidth As Integer = 150
+    Const c_lineheight As Integer = 15
+    Const c_cpl As Integer = 40
+    Const c_lineoverflow As Integer = 2
+    Dim rws As Integer
+    pComment.Shape.Placement = xlMove
+    rws = Round(Len(pComment.text) / c_cpl)
+    pComment.Shape.Width = c_defwidth
+    pComment.Shape.Height = c_lineheight * (rws + c_lineoverflow)
+End Sub
+
+Public Sub ii_REVIEW_commentUP()
+    Call ii_REVIEW_commentUPX
+End Sub
+Public Sub ii_REVIEW_commentUPX(Optional ByRef pTargetRange As Range = Nothing, Optional ByVal pPrefix As String = "")
+Dim rS As Range
+    Dim rT As Range
+    Dim t As String, s As String
+    Dim i As Long
+    ' Set the source and target range to the current selection but exit if the selection is anything other than a range
+    Set rS = Cells(1, 1)
+    If Not (TypeName(Selection) = TypeName(rS)) Then Exit Sub
+    Set rS = Selection
+    ' If there is a defined target range and it has the same number of cells as the selection then reset the target range. otherwise exit
+    If pTargetRange Is Nothing Then
+        Set rT = Selection
+    Else
+        If rS.Cells.Count = pTargetRange.Cells.Count Then
+            Set rT = pTargetRange
+        Else
+            Exit Sub
+        End If
+    End If
+    ' For each cell in the source range add a comment in the target range
+    For i = 1 To rS.Cells.Count
+        t = pPrefix & rS.Cells(i).Value
+        If Len(t) > 0 Then
+            If rT.Cells(i).Comment Is Nothing Then
+                rT.Cells(i).AddComment text:=t
+            Else
+                s = rT.Cells(i).Comment.text
+                rT.Cells(i).Comment.text text:=Chr(10) & t, Start:=Len(s) + 1, overwrite:=False
+            End If
+            ii_reshapeComment rT.Cells(i).Comment
+        End If
+    Next
+End Sub
+
+Public Sub ii_REVIEW_commentDOWN()
+' ii_cell2comment Macro
+' Convert the content (text value) of a comment into a cell value. [see also ii_cell2comment]
+    Dim r As Range
+    Dim c As Range
+    Dim t As String
+    Set r = Cells(1, 1)
+    If Not (TypeName(Selection) = TypeName(r)) Then Exit Sub
+    Set r = Selection
+    For Each c In r
+        If Not (c.Comment Is Nothing) Then
+            t = c.Comment.text
+            c.ClearComments
+            If Len(c.Value) > 0 Then
+                c.Value = c.Value & Chr(10) & t
+            Else
+                c.Value = t
+            End If
+        End If
+    Next
+End Sub
+
+Public Sub ii_Unmerge()
+' ii_Unmerge Macro
+' Unmerges selected cells and sets the value of the new split cells to the same as the original merged cell.
+    Dim vAreas As Range
+    Dim vRange As Range
+    Dim r1 As Range
+    Dim vCell As Range
+    Dim c1 As Range
+    Dim t As String
+    Dim mranges As New Collection
+    Set vAreas = Cells(1, 1)
+    If Not (TypeName(Selection) = TypeName(vAreas)) Then Exit Sub
+    Set vAreas = Selection
+    'for each area, for each range, for each cell...
+    On Error Resume Next
+    For Each vRange In vAreas.Areas
+        For Each vCell In vRange
+            If vCell.MergeCells Then
+                mranges.Add Item:=vCell.MergeArea.Cells(1, 1), Key:=vCell.MergeArea.Cells(1, 1).Address
+            End If
+        Next
+    Next
+    On Error GoTo 0
+    'next loop will test each cell in the area and create a selection of cells, one for each head cell (ie 1st cell of a merged area)
+    'we now have all the head cells of all the merged areas in mranges
+    'next loop will unmerge them and populate values
+    For Each vCell In mranges
+        vCell.Select
+        vCell.UnMerge
+        Set r1 = Selection
+        t = r1.Cells(1, 1).Value
+        For Each c1 In r1
+            c1.Value = t
+        Next
+    Next
+End Sub
+
+Public Sub ii_InsertObjectIcon()
+    Dim path As String, fname As String
+    With Application.FileDialog(msoFileDialogFilePicker)
+        .AllowMultiSelect = False
+        .Title = "Select file to embed"
+        .ButtonName = "Select"
+        .InitialFileName = ActiveWorkbook.path
+        On Error Resume Next
+        .Show
+        path = .SelectedItems(1)
+        On Error GoTo 0
+    End With
+    If path = "" Then Exit Sub
+    fname = Mid(path, InStrRev(path, "\") + 1)
+    ActiveSheet.OLEObjects.Add(Filename:=path, Link:=False, DisplayAsIcon:=True, IconFileName:="C:\Program Files\Internet Explorer\iexplore.exe.mui", IconIndex:=-1, IconLabel:=fname).Select
+    Selection.ShapeRange.ScaleWidth 0.24, msoFalse, msoScaleFromTopLeft
+    Selection.ShapeRange.ScaleHeight 0.24, msoFalse, msoScaleFromTopLeft
+End Sub
+
+Public Function ii_EDIT_AllTrim(ByVal tobetrimmed As String) As String
+    Dim s As String
+    Dim whitespace As String
+    whitespace = " "
+    whitespace = whitespace & Chr(10)
+    whitespace = whitespace & Chr(13)
+    whitespace = whitespace & Chr(9)
+    s = tobetrimmed
+    Do Until (InStr(1, whitespace, Left(s, 1)) = 0) Or Len(s) = 0
+        s = Mid(s, 2)
+    Loop
+    Do Until (InStr(1, whitespace, Right(s, 1)) = 0) Or Len(s) = 0
+        s = Mid(s, 1, Len(s) - 1)
+    Loop
+    ii_EDIT_AllTrim = s
+End Function
+
+Public Sub ii_SearchHighlight()
+'   Searches for a string and highlights the cells in which it is found
+    Dim sh As Worksheet
+    Set sh = ActiveSheet
+    Dim cs As Long
+    Dim cellstrings As String
+    cellstrings = ""
+    Dim test As Boolean
+    cs = Application.Calculation
+    Application.Calculation = xlCalculationManual
+    Dim c As Range
+    Dim s As String
+    s = InputBox("please enter the terms to match and highlight", "Highlight Cells")
+    If IsEmpty(s) Then Exit Sub
+    For Each c In Selection
+        cellstrings = c.Value
+        If Not (c.Comment Is Nothing) Then cellstrings = cellstrings & c.Comment.text
+'        test = InStr(1, cellstrings, s, vbTextCompare) > 0
+        test = ii_RegExpFind(cellstrings, s, True)
+        If test Then
+            c.Interior.Pattern = xlPatternCrissCross
+            c.Interior.PatternColor = RGB(255, 255, 0)
+        End If
+        'ActiveCell.SpecialCells(xlLastCell).Select
+    Next
+    Application.Calculation = cs
+End Sub
+
+Public Function ii_MaxValue(ParamArray values() As Variant) As Variant
+    Dim itm As Variant
+    Dim maxitm As Variant
+    For Each itm In values
+        If itm > maxitm Then maxitm = itm
+    Next
+    ii_MaxValue = maxitm
+End Function
+
+Public Function ii_MinValue(ParamArray values() As Variant) As Variant
+    Dim itm As Variant
+    Dim minitm As Variant
+    For Each itm In values
+        If itm < minitm Then minitm = itm
+    Next
+    ii_MinValue = minitm
+End Function
+
+Function ii_CountOccurances(p_pattern As String, p_within As String) As Long
+    Dim c As Long, Pos As Long, newpos As Long
+    c = 0
+    newpos = 1 - Len(p_pattern)
+    Do
+        Pos = newpos
+        newpos = InStr(Pos + Len(p_pattern), p_within, p_pattern)
+        If newpos > 0 Then c = c + 1
+    Loop Until newpos = 0
+    ii_CountOccurances = c
+End Function
+
+Public Sub ii_ValidationMsg2Column()
+' Takes the values of the topmost row of the current selection and applies them as the validation message for their respective columns.
+    Dim msg As String
+    Dim r As Range
+    Dim r1 As Range
+    Dim r0, c, c0, c9 As Integer
+    ' begin
+    Set r = Cells(1, 1)
+    If Not (TypeName(Selection) = TypeName(r)) Then Exit Sub
+    Set r = Selection
+    ' reset pointers
+    c0 = r.Column
+    c9 = r.Column + r.Columns.Count - 1
+    r0 = r.Row
+    ' parse selection
+    For c = c0 To c9
+        msg = Cells(r0, c).Value
+        If Len(msg) > 0 Then
+            Columns(c).Select
+            Set r1 = Selection
+            r1.Validation.Delete
+            r1.Validation.Add (xlValidateInputOnly)
+            r1.Validation.InputMessage = msg
+        End If
+    Next
+End Sub
+ 
+Function ii_RegExpSubstitute(ReplaceIn, ReplaceWhat As String, ReplaceWith As String)
+    #If Not LateBind Then
+    Dim RE As RegExp
+    Set RE = New RegExp
+    #Else
+    Dim RE As Object
+    Set RE = CreateObject("vbscript.regexp")
+    #End If
+    RE.Pattern = ReplaceWhat
+    RE.Global = True
+    ii_RegExpSubstitute = RE.Replace(ReplaceIn, ReplaceWith)
+End Function
+
+Function ii_RegExpFind(FindIn, FindWhat As String, Optional IgnoreCase As Boolean = False) As Boolean ' As boolean added by ii
+    Dim i As Long
+    #If Not LateBind Then
+    Dim RE As RegExp, allMatches As MatchCollection, aMatch As Match
+    Set RE = New RegExp
+    #Else
+    Dim RE As Object, allMatches As Object, aMatch As Object
+    Set RE = CreateObject("vbscript.regexp")
+    #End If
+    RE.Pattern = FindWhat
+    RE.IgnoreCase = IgnoreCase
+    RE.Global = True
+    Set allMatches = RE.Execute(FindIn)
+' below commented out by ii
+'    ReDim rslt(0 To allMatches.Count - 1)
+'    For i = 0 To allMatches.Count - 1
+'        rslt(i) = allMatches(i).Value
+'        Next i
+'    RegExpFind = rslt
+    ii_RegExpFind = (allMatches.Count > 0) ' added by ii to return true/false
+End Function
+
+Public Function ii_EncodeMD5(ByVal ttext As String) As String
+    Dim objMD5 As clsMD5
+    Set objMD5 = New clsMD5
+    ii_EncodeMD5 = objMD5.DigestStrToHexStr(ttext)
+    Set objMD5 = Nothing
+End Function
+
+Public Function ii_Compress(ByVal ttext As String) As String
+    Dim objHF As clsHuffman
+    Set objHF = New clsHuffman
+    Dim s As String
+    s = objHF.EncodeString(ttext)
+    ii_Compress = s
+End Function
+
+Public Function ii_DeCompress(ByVal ttext As String) As String
+    Dim objHF As clsHuffman
+    Set objHF = New clsHuffman
+    Dim s As String
+    s = objHF.DecodeString(ttext)
+    ii_DeCompress = s
+End Function
+
+Public Function ii_ConcatenateIf( _
+                                lookup_range As Range, _
+                                lookup_value As String, _
+                                concatenate_from_range As Range, _
+                                Optional separator As String = ",") _
+                                As String
+    Dim c As Range
+    Dim s As String
+    Dim i As Long
+    s = ""
+    i = 0
+    For Each c In lookup_range.Cells
+        i = i + 1
+        If Len(c.Value) = 0 Then Exit For
+        If (c.Value = lookup_value) Then s = s & concatenate_from_range.Cells(i, 1) & separator
+    Next
+    If (Len(s) > 0) And (Right(s, Len(separator)) = separator) Then s = Left(s, Len(s) - Len(separator)) 'remove the last separator
+    ii_ConcatenateIf = s
+End Function
+
+Public Sub ii_FilterbyContains()
+    ' range
+    Dim r As Range
+    Set r = Cells(1, 1)
+    If Not (TypeName(Selection) = TypeName(r)) Then Exit Sub
+    Set r = Selection
+    ' declare
+    Const cOR = "||"
+    Const cAND = "&&"
+    Const cOPERLEN As Long = 2
+    Dim s As String
+    Dim s1 As String
+    Dim s2 As String
+    Dim voper As Long
+    Dim pvt1 As Long
+    Dim pvt2 As Long
+    Dim pvt As Long
+    ' begin
+    s = InputBox("Enter text to search: ||=OR; &&=AND; ?=char; *=many chars", "Input filter text", Selection.Value)
+    If s = "" Then Exit Sub
+    pvt1 = 0
+    pvt2 = 0
+    On Error Resume Next
+    pvt1 = InStr(s, "&&") 'excel does not like the constants here ... meh
+    pvt2 = InStr(s, "||") 'excel does not like the constants here ... meh
+    On Error GoTo 0
+    If pvt1 > 0 And pvt2 > 0 Then
+        MsgBox "only one of " & cAND & " or " & cOR & " are allowed"
+        Exit Sub
+    End If
+    If pvt1 > 0 Then voper = 1 'xlAnd value
+    If pvt2 > 0 Then voper = 2 'xlOr vale
+    pvt = ii_MaxValue(pvt1, pvt2)
+    If pvt > 0 Then 'if we have AND or OR
+        s1 = Left(s, pvt - 1)
+        s2 = Mid(s, pvt + cOPERLEN)
+        r.AutoFilter field:=r.Column, Criteria1:=s1, Operator:=voper, Criteria2:=s2
+    Else
+        r.AutoFilter field:=r.Column, Criteria1:=s
+    End If
+End Sub
+
+Public Sub ii_PasteSmart()
+    On Error GoTo L2
+    ActiveSheet.PasteSpecial Format:="Text", NoHTMLFormatting:=True
+    GoTo LZ
+L2:
+    On Error Resume Next
+    Application.Dialogs(xlDialogPasteSpecial).Show
+LZ:
+    On Error GoTo 0
+End Sub
+
+Sub ii_AddHyperLinks(Optional ByRef pAskForURL As Boolean, Optional ByRef pBaseURL As String)
+    Dim cMsg As String: cMsg = "Enter base URL. The value of the cell will be added at the end OR it will replace ~CELLVALUE~"
+    Dim cCVm As String: cCVm = "~CELLVALUE~"
+    Dim vBaseURL As String 'the base url mask to add as a link
+    Dim vReplace As Boolean 'true if we in base url we found the marker to replace with the cell value
+    Dim vAddress As String 'resulting full url to be added
+    Dim oSelection As Range: Set oSelection = Selection
+    Dim vAskForURL As Boolean
+    
+    If IsMissing(pAskForURL) Then vAskForURL = True Else vAskForURL = pAskForURL
+    If IsMissing(pBaseURL) Then vBaseURL = cCVm Else vBaseURL = pBaseURL
+    ' Obtain the base url - exit if cancel or zero lenth
+    
+    If vAskForURL Then
+        vBaseURL = InputBox(cMsg, "Enter Base URL", vBaseURL)
+    Else
+        vBaseURL = pBaseURL
+    End If
+    If Len(vBaseURL) = 0 Then Exit Sub
+    If Right(vBaseURL, 1) <> "\" Then vBaseURL = vBaseURL & "\"
+    
+    ' If multiple areas are selected then recurse once for each unique area - then end
+    If oSelection.Areas.Count > 1 Then
+        Dim unique_range As Range
+        For Each unique_range In oSelection.Areas
+            unique_range.Select
+            Call ii_AddHyperLinks(False, vBaseURL)
+        Next
+        Set unique_range = Nothing
+        Exit Sub
+    End If
+    
+    ' save format
+    Dim oFormatR As Range
+    Set oFormatR = ii_FormatSave(oSelection)
+    
+    vReplace = (InStr(vBaseURL, cCVm) > 0) 'did we find the cell value marker?
+    Dim oCell As Range
+    For Each oCell In oSelection
+        If vReplace Then
+            vAddress = Replace(expression:=vBaseURL, Find:=cCVm, Replace:=oCell.Value, Compare:=vbTextCompare)
+        Else
+            vAddress = vBaseURL & oCell.Value
+        End If
+        If oCell.Hyperlinks.Count > 0 Then oCell.Hyperlinks.Delete
+        oCell.Hyperlinks.Add Anchor:=oCell, Address:=vAddress
+    Next
+    
+    ' restore format
+    Call ii_FormatRestore(oFormatR, oSelection)
+End Sub
+
+Function ii_FormatSave(ByRef target_range As Range) As Range
+    Dim saved_range As Range
+    Dim oCWS As Worksheet: Set oCWS = ActiveSheet
+    Dim oFWS As Worksheet: Set oFWS = Worksheets.Add(after:=Worksheets(Worksheets.Count))
+    Set saved_range = oFWS.Cells(1, 1)
+    target_range.Copy
+    saved_range.PasteSpecial Paste:=xlPasteFormats
+    Set saved_range = Selection
+    oCWS.Activate
+    Set ii_FormatSave = saved_range
+End Function
+
+Sub ii_FormatRestore(ByRef from_range As Range, ByRef to_range As Range)
+    from_range.Copy
+    to_range.PasteSpecial Paste:=xlPasteFormats
+    Dim bDisplayAlerts As Boolean: bDisplayAlerts = Application.DisplayAlerts: Application.DisplayAlerts = False
+    from_range.Parent.Delete
+    Application.DisplayAlerts = bDisplayAlerts
+End Sub
+
+Function ii_ConvertArray2Collection(ByRef from_array As Variant) As Collection
+    Dim return_collection As New Collection
+    Dim i As Variant
+    For Each i In from_array
+        return_collection.Add i
+    Next
+    Set ii_ConvertArray2Collection = return_collection
+End Function
+
+Function ii_ConvertCollection2Array(ByRef from_collection As Collection) As Variant
+    Dim _
+        return_array As Variant, _
+        collection_item As Variant, _
+        i As Long
+    ReDim return_array(from_collection.Count - 1)
+    i = 0
+    For Each collection_item In from_collection
+       return_array(i) = collection_item
+       i = i + 1
+    Next
+    ii_ConvertCollection2Array = return_array
+End Function
+
+Public Function ii_GetRelativePath(ByVal from_path As String, ByVal to_path As String) As String
+    Dim _
+        s1 As String, _
+        s2 As String, _
+        s1a As Variant, _
+        s2a As Variant, _
+        common_level As Integer, _
+        relative_path As String, _
+        back_out As Integer, _
+        drive_in As String, _
+        i9 As Integer, _
+        i As Integer
+    If from_path = to_path Then ' RESULT: same path
+        ii_GetRelativePath = ".\"
+        Exit Function
+    End If
+    If Left(from_path, 1) <> Left(to_path, 1) Then ' RESULT: completely different from root
+        ii_GetRelativePath = to_path
+        Exit Function
+    End If
+    ' Find the point in the strings where commonalities end
+    common_level = 0
+    Do
+        common_level = common_level + 1
+    Loop While (Mid(from_path, common_level, 1) = Mid(to_path, common_level, 1))
+    s1 = Mid(from_path, common_level)
+    s2 = Mid(to_path, common_level)
+    ' Break the tail (common point to end) of source path into its subfolder parts
+    s1a = Split(s1, "\")
+    back_out = UBound(s1a) ' how many levels do we need to back out? "..\"
+    If back_out = -1 Then ' RESULT: same branch go in
+        ii_GetRelativePath = Mid(s2, 2)
+        Exit Function
+    End If
+    relative_path = ""
+    For i = 0 To back_out 'lets add all the backing out dots
+        relative_path = relative_path & "..\"
+    Next
+    relative_path = relative_path & s2 'now lets add the down path
+    ii_GetRelativePath = relative_path
+End Function
+
+Sub ii_ClipboardPutString(pString As String)
+    Dim DataObj As New MSForms.DataObject
+    DataObj.SetText pString
+    DataObj.PutInClipboard
+End Sub
+
+Function ii_ClipboardGetString() As String
+    Dim DataObj As New MSForms.DataObject
+    Dim s As String
+    s = ""
+    On Error Resume Next
+    DataObj.GetFromClipboard
+    s = DataObj.GetText
+    On Error GoTo 0
+    ii_ClipboardGetString = s
+End Function
+
+Sub ii_ConsolidateWorksheets()
+    Dim CWS As Worksheet: Set CWS = ActiveSheet
+    Dim CWB As Workbook: Set CWB = ActiveWorkbook
+    Dim SEL As Range: Set SEL = Cells(1, 1)
+    
+    Dim sh As Worksheet
+    Dim out_sh As Worksheet
+    
+    If MsgBox("Are you sure you know what you are doing with this? Shall I exit?", vbYesNo) = vbYes Then Exit Sub
+    
+    Set out_sh = CWB.Sheets("CONSOLIDATED")
+    Dim i As Long
+    Dim j As Long
+    Dim r1 As Range
+    Dim r2 As Range
+    i = 2
+    
+    out_sh.Select
+    
+    For Each sh In CWB.Sheets
+        If sh.Name <> "CONSOLIDATED" Then
+            out_sh.Cells(i, 1).Value = sh.Name
+            sh.Activate
+            sh.Range("A2:V2").Select
+'            sh.Range(Selection, Selection.End(xlToRight)).Select
+            If Len(sh.Range("A3").Value) > 0 Then
+                sh.Range(Selection, Selection.End(xlDown)).Select
+            End If
+            Selection.Copy
+            Set r1 = Selection
+            out_sh.Activate
+            j = r1.Rows.Count
+            Set r2 = out_sh.Cells(i, 2)
+            r2.PasteSpecial Paste:=xlPasteValues
+            i = i + j
+            out_sh.Cells(i, 1).Select
+        End If
+    Next
+
+End Sub
+
+' ### FUNCTIONS GROUP ###
+
+Public Function ii_FORMULAS_SmartVLOOKUP(ByRef lookup_value As Variant, ByRef lookup_range As Range, ByRef lookup_header As String) As Variant
+    Dim result_value As Variant
+    Dim effective_column As Double
+    effective_column = Excel.WorksheetFunction.Match(lookup_header, lookup_range.Rows(1), False)
+    result_value = Excel.WorksheetFunction.VLookup(lookup_value, lookup_range, effective_column, False)
+    ii_FORMULAS_SmartVLOOKUP = result_value
+End Function
+
+Public Function ii_FORMULAS_TextDayOfWeek(the_date As Date, Optional the_length As Long = 255) As String
+    Dim WT As Variant
+    WT = Array("", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    ii_FORMULAS_TextDayOfWeek = Left(WT(Excel.WorksheetFunction.Weekday(the_date, 2)), the_length)
+End Function
+
+Public Function ii_EDIT_SelectRange(Optional ByRef pRangeIfFail As Range, Optional ByVal pPrompt As String = "Select range") As Range
+    Dim inputR As Range
+    On Error Resume Next
+    Set inputR = Application.InputBox(prompt:=pPrompt, Type:=8)
+    On Error GoTo 0
+    If inputR Is Nothing Then Set inputR = pRangeIfFail
+    Set ii_EDIT_SelectRange = inputR
+End Function
+
+Public Sub ii_INSERT_HyperlinksAdd()
+    ' PROXY TO Sub ii_AddHyperLinks(Optional pBaseURL As String = "")
+    ii_AddHyperLinks pAskForURL:=True, pBaseURL:=ii_ClipboardGetString
+End Sub
+
+Public Sub ii_INSERT_HyperLinksRemove()
+    Dim oSelection As Range: Set oSelection = Selection
+    Dim oCell As Range
+    Dim oFormatR As Range
+    Dim vClipboard As String
+    
+    vClipboard = ii_ClipboardGetString
+   ' If multiple areas are selected then recurse once for each unique area - then end
+    If oSelection.Areas.Count > 1 Then
+        Dim unique_range As Range
+        For Each unique_range In oSelection.Areas
+            unique_range.Select
+            Call ii_INSERT_HyperLinksRemove
+        Next
+        Set unique_range = Nothing
+        Exit Sub
+    End If
+
+    Set oFormatR = ii_FormatSave(oSelection)
+    On Error Resume Next
+    For Each oCell In oSelection
+        oCell.Hyperlinks.Delete
+    Next
+    On Error GoTo 0
+    Call ii_FormatRestore(oFormatR, oSelection)
+    ii_ClipboardPutString vClipboard
+End Sub
+
+Public Sub ii_FORMULAS_AddUKHolidaysName()
+    Dim a_holidays As Variant
+    a_holidays = Array( _
+        "03/01/2011", "22/04/2011", "25/04/2011", "29/04/2011", "02/05/2011", "30/05/2011", "29/08/2011", "26/12/2011", "27/12/2011", _
+        "02/01/2012", "06/04/2012", "09/04/2012", "07/05/2012", "04/06/2012", "05/06/2012", "27/08/2012", "25/12/2012", "26/12/2012", _
+        "01/01/2013", "29/03/2013", "01/04/2013", "06/05/2013", "27/05/2013", "26/08/2013", "25/12/2013", "26/12/2013", _
+        "01/01/2014", "18/04/2014", "21/04/2014", "05/05/2014", "26/05/2014", "25/08/2014", "25/12/2014", "26/12/2014", _
+        "01/01/2015", "03/04/2015", "06/04/2015", "04/05/2015", "25/05/2015", "31/08/2015", "25/12/2015", "28/12/2015" _
+    )
+
+    Dim dates As String
+    dates = "={" & CLng(DateValue(a_holidays(0)))
+    Dim i As Long
+    For i = 1 To UBound(a_holidays)
+        dates = dates & "," & CLng(DateValue(a_holidays(i)))
+    Next
+    dates = dates & "}"
+    ActiveWorkbook.Names.Add Name:="iiC_DATE_UKHolidays", RefersTo:=dates
+    ActiveWorkbook.Names("iiC_DATE_UKHolidays").Comment = ""
+End Sub
+
+Public Function ii_getFolder(Optional ByVal sprompt As String) As String
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .AllowMultiSelect = False
+        .Title = sprompt
+        .ButtonName = "Select"
+        .InitialFileName = ActiveWorkbook.path
+        .Show
+        ii_getFolder = .SelectedItems(1)
+    End With
+End Function
+
+
+'### END OF FUNCTIONS GROUP ###
+
